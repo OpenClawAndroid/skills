@@ -1,3 +1,8 @@
+---
+name: CodexUI Dev Mode
+description: Modify your own UI when running in dev mode (codexUI source at /root/codexUI)
+---
+
 # CodexUI Dev Mode
 
 When running in "dev" version, CodexUI is cloned from `https://github.com/friuns2/codexUI` at `/root/codexUI` and served with Vite dev server (hot-reload).

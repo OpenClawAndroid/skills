@@ -1,3 +1,8 @@
+---
+name: Android Device Access
+description: Access camera, calendar, file storage, clipboard, sharing, URLs, and am on Android
+---
+
 # Android Device & Intents
 
 You run inside proot on Android. Access device hardware via `termux-*` commands (native bridge) and launch Android actions via `am`.
