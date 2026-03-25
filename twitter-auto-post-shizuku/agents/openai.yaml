@@ -1,0 +1,4 @@
+interface:
+  display_name: "Twitter Auto Post"
+  short_description: "Auto post text to X using Shizuku."
+  default_prompt: "Post this text to Twitter fully automatically via Shizuku: {{text}}"
