@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2f6cdf" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Install App</title>
+    <style>
+      :root { font-family: 'Avenir Next', 'Segoe UI', sans-serif; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 10% 20%, #f3f8ff 0%, #e4eefb 45%, #d9e5f7 100%);
+        color: #1a2a42;
+      }
+      .card {
+        width: min(560px, calc(100% - 32px));
+        background: #ffffffee;
+        border: 1px solid #c8d7ee;
+        border-radius: 18px;
+        box-shadow: 0 18px 34px rgba(30, 62, 112, 0.14);
+        padding: 24px;
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      button, a {
+        display: inline-block;
+        border-radius: 12px;
+        padding: 10px 14px;
+        text-decoration: none;
+        font-weight: 600;
+        border: 1px solid #2f6cdf;
+      }
+      button { background: #2f6cdf; color: white; cursor: pointer; }
+      button[disabled] { opacity: 0.6; cursor: not-allowed; }
+      a { background: white; color: #2f6cdf; }
+      #status { margin-top: 12px; font-size: 0.95rem; color: #4d5d75; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Install App</h1>
+      <p>Install and share this app.</p>
+      <div class="actions">
+        <button id="installBtn" disabled>Install App</button>
+        <button id="shareBtn" type="button">Share App</button>
+        <a href="/">Open App</a>
+      </div>
+      <p id="status">Checking install availability...</p>
+    </main>
+
+    <script>
+      let deferredPrompt = null;
+      const btn = document.getElementById('installBtn');
+      const shareBtn = document.getElementById('shareBtn');
+      const statusEl = document.getElementById('status');
+      const shareData = {
+        title: 'PWA App',
+        text: 'Install this PWA app',
+        url: location.origin + '/',
+      };
+
+      window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredPrompt = event;
+        btn.disabled = false;
+        statusEl.textContent = 'Install is available.';
+      });
+
+      btn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        statusEl.textContent = choice.outcome === 'accepted' ? 'Install accepted.' : 'Install dismissed.';
+        deferredPrompt = null;
+        btn.disabled = true;
+      });
+
+      shareBtn.addEventListener('click', async () => {
+        try {
+          if (navigator.share) {
+            await navigator.share(shareData);
+            statusEl.textContent = 'App link shared.';
+            return;
+          }
+          await navigator.clipboard.writeText(shareData.url);
+          statusEl.textContent = 'Share API unavailable. Link copied to clipboard.';
+        } catch {
+          statusEl.textContent = 'Unable to share right now.';
+        }
+      });
+
+      window.addEventListener('appinstalled', () => {
+        statusEl.textContent = 'App installed successfully.';
+        btn.disabled = true;
+      });
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
+
+      setTimeout(() => {
+        if (!deferredPrompt && statusEl.textContent === 'Checking install availability...') {
+          statusEl.textContent = 'Install prompt not available yet. Use supported browser on HTTPS.';
+        }
+      }, 2000);
+    </script>
+  </body>
+</html>
