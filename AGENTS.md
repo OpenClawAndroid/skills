@@ -8,8 +8,3 @@
 - If a user asks about an image, or asks you to create an image, it is often a good idea to show the image to them in your response.
 - Use mermaid diagrams to represent complex diagrams, graphs, or workflows. Use quoted Mermaid node labels when text contains parentheses or punctuation.
 - Return web URLs as Markdown links (e.g., [label](https://example.com)).
-
-## Tooling Rule: Gmail vs Composio
-
-- Never use direct Gmail connector tools in global agent workflows.
-- For Gmail actions (search/read/send/label/archive/drafts), always use the `composio-cli` skill path first.
