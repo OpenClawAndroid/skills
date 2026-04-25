@@ -27,6 +27,11 @@ python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/searc
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --query "musk" --regex
 ```
 
+If the user really wants threads about a topic rather than body-text matches, prefer title query:
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --title-query "persist|draft|workspace|rename|localstorage" --query-mode title --newest-first --limit 8
+```
+
 3. Filter by exact absolute project/cwd path:
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "memory"
@@ -39,6 +44,11 @@ Exact project paths include the whole project family by default:
 4. Filter by project/cwd substring:
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "codex-web-local" --project-contains --query "memory"
+```
+
+For better "useful hits" ranking, use hybrid mode:
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "workspace-roots-state|localStorage|thread-draft|persist|persistence" --title-query "persist|draft|workspace|rename|localstorage" --query-mode hybrid --regex --newest-first --limit 10
 ```
 
 5. List discovered projects:

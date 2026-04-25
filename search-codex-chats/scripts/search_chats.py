@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import argparse
-import hashlib
 import json
 import re
 import sqlite3
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -208,6 +208,12 @@ def load_threads_from_state_db(db_path: Path) -> List[Tuple[str, str, str, int]]
     return out
 
 
+def format_created_at_ms(created_at_ms: int) -> str:
+    if created_at_ms <= 0:
+        return ''
+    return datetime.fromtimestamp(created_at_ms / 1000, tz=timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
 def file_project(lines: List[str]) -> str:
     for line in lines:
         try:
@@ -232,17 +238,38 @@ def first_session_timestamp(lines: List[str]) -> str:
     return ''
 
 
+def build_matcher(query: Optional[str], regex: bool):
+    if not query:
+        return lambda s: True
+    if regex:
+        try:
+            pattern = re.compile(query, re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError(f'invalid regex: {exc}') from exc
+        return lambda s: bool(pattern.search(s))
+    query_lower = query.lower()
+    return lambda s: query_lower in s.lower()
+
+
+def looks_like_regex(query: Optional[str]) -> bool:
+    if not query:
+        return False
+    return bool(re.search(r'[|()[\]{}.*+?\\]', query))
+
+
 def build_text_matcher(args: argparse.Namespace):
     if args.list_projects and not args.query:
         return lambda s: True
-    if args.regex:
-        try:
-            pattern = re.compile(args.query or '', re.IGNORECASE)
-        except re.error as exc:
-            raise ValueError(f'invalid --query regex: {exc}') from exc
-        return lambda s: bool(pattern.search(s))
-    query = (args.query or '').lower()
-    return lambda s: query in s.lower()
+    return build_matcher(args.query, args.regex or args.query_mode == 'regex')
+
+
+def build_title_matcher(args: argparse.Namespace):
+    title_query = args.title_query or args.query
+    use_regex = args.regex or args.query_mode == 'regex' or looks_like_regex(title_query)
+    try:
+        return build_matcher(title_query, use_regex)
+    except ValueError as exc:
+        raise ValueError(f'invalid --title-query regex: {exc}') from exc
 
 
 def build_project_matcher(args: argparse.Namespace):
@@ -293,6 +320,7 @@ def apply_limit(items: List, limit: Optional[int]) -> List:
 def should_use_rg_prefilter(args: argparse.Namespace) -> bool:
     return bool(
         args.query
+        and args.query_mode in ('auto', 'literal')
         and not args.regex
         and not args.list_projects
         and not args.threads_only
@@ -415,6 +443,66 @@ def print_list_projects(projects: Dict[str, int], project_matcher) -> int:
     return 0
 
 
+def collect_title_results(
+    thread_rows: List[Tuple[str, str, str, int]],
+    title_matcher,
+    project_matcher,
+) -> List[Tuple[str, str, str, int]]:
+    return [
+        (thread_id, title, cwd, created_at_ms)
+        for thread_id, title, cwd, created_at_ms in thread_rows
+        if project_matcher(cwd) and title_matcher(title)
+    ]
+
+
+def sort_title_results(args: argparse.Namespace, rows: List[Tuple[str, str, str, int]]) -> List[Tuple[str, str, str, int]]:
+    if args.sort_threads_by_date or args.newest_first:
+        rows = sorted(rows, key=lambda item: (item[3], item[0]), reverse=args.newest_first)
+    else:
+        rows = sorted(rows, key=lambda item: item[0])
+    return apply_limit(rows, args.limit)
+
+
+def print_title_results(rows: List[Tuple[str, str, str, int]], args: argparse.Namespace) -> int:
+    rows = sort_title_results(args, rows)
+    print(f'matches={len(rows)}')
+    print(f'threads={len({row[0] for row in rows})}')
+    print(f'projects={len({row[2] for row in rows if row[2]})}')
+    for thread_id, title, cwd, created_at_ms in rows:
+        ts = format_created_at_ms(created_at_ms)
+        print(f'{ts}\t{thread_id}\t{cwd}\tstate_5.sqlite:title\t{title[:220]}')
+    return 0
+
+
+def print_hybrid_results(
+    args: argparse.Namespace,
+    title_rows: List[Tuple[str, str, str, int]],
+    text_results: List[Tuple[str, str, str, Path, int, str]],
+) -> int:
+    title_rows = sort_title_results(args, title_rows)
+    preferred_thread_ids = {row[0] for row in title_rows}
+    synthetic_title_results = [
+        (format_created_at_ms(created_at_ms), thread_id, cwd, Path('state_5.sqlite'), 0, title, 'title')
+        for thread_id, title, cwd, created_at_ms in title_rows
+    ]
+    ranked_snippets = sorted(
+        text_results,
+        key=lambda row: (row[1] not in preferred_thread_ids, row[0]),
+        reverse=args.newest_first,
+    )
+    combined = synthetic_title_results + [
+        (ts, tid, project, path, line_no, text, 'preferred-snippet' if tid in preferred_thread_ids else 'snippet')
+        for ts, tid, project, path, line_no, text in ranked_snippets
+    ]
+    combined = apply_limit(combined, args.limit)
+    print(f'matches={len(combined)}')
+    print(f'threads={len({row[1] for row in combined if row[1]})}')
+    print(f'projects={len({row[2] for row in combined if row[2]})}')
+    for ts, tid, project, path, line_no, text, kind in combined:
+        print(f'{ts}\t{tid}\t{project}\t{path}:{line_no}:{kind}\t{text[:220]}')
+    return 0
+
+
 def print_search_results(
     args: argparse.Namespace,
     results: List[Tuple[str, str, str, Path, int, str]],
@@ -466,6 +554,8 @@ def print_search_results(
 def main() -> int:
     parser = argparse.ArgumentParser(description='Search local Codex chats.')
     parser.add_argument('--query', help='Literal text or regex pattern')
+    parser.add_argument('--title-query', help='Match against thread title and first user message via SQLite metadata')
+    parser.add_argument('--query-mode', choices=['auto', 'literal', 'regex', 'title', 'hybrid'], default='auto', help='Search mode: text search, title search, or hybrid ranking')
     parser.add_argument('--regex', action='store_true', help='Treat query as regex')
     parser.add_argument('--project', help='Only search sessions from this project/cwd. Absolute paths match exactly.')
     parser.add_argument('--project-regex', action='store_true', help='Treat --project as regex')
@@ -483,19 +573,22 @@ def main() -> int:
     args = parser.parse_args()
 
     thread_listing_mode = args.threads_only or args.threads_with_titles
-    if not args.query and not args.list_projects and not thread_listing_mode:
-        parser.error('--query is required unless --list-projects or a thread-listing mode is used')
+    if not args.query and not args.title_query and not args.list_projects and not thread_listing_mode:
+        parser.error('--query or --title-query is required unless --list-projects or a thread-listing mode is used')
+    if args.query_mode in ('title', 'hybrid') and not (args.title_query or args.query):
+        parser.error('--query-mode title/hybrid requires --title-query or --query')
 
     try:
         matcher = build_text_matcher(args)
         project_matcher = build_project_matcher(args)
+        title_matcher = build_title_matcher(args)
     except ValueError as exc:
         parser.error(str(exc))
 
     state_db_path = Path(args.state_db).expanduser()
+    thread_rows = load_threads_from_state_db(state_db_path)
 
     if thread_listing_mode and not args.query:
-        thread_rows = load_threads_from_state_db(state_db_path)
         if thread_rows:
             filtered_threads = [
                 (thread_id, title, created_at_ms)
@@ -529,6 +622,10 @@ def main() -> int:
     if args.list_projects:
         return print_list_projects(projects, project_matcher)
 
+    if args.query_mode == 'title':
+        title_results = collect_title_results(thread_rows, title_matcher, project_matcher)
+        return print_title_results(title_results, args)
+
     results, _, matching_threads = collect_search_results(
         candidate_files,
         matcher,
@@ -536,6 +633,9 @@ def main() -> int:
         dedupe=args.dedupe,
         include_boilerplate=args.include_boilerplate,
     )
+    if args.query_mode == 'hybrid':
+        title_results = collect_title_results(thread_rows, title_matcher, project_matcher)
+        return print_hybrid_results(args, title_results, results)
     return print_search_results(args, results, matching_threads, state_db_path)
 
 
