@@ -20,8 +20,9 @@ For app creation/update requests:
 
 1. Create/update files, including `icon.svg` and `app.json`.
 2. ZIP the app with a no-spaces path.
-3. Deploy to production with `POST /api/deploy` and `update_existing=true`.
-4. Reply only with `app_id`, app URL, and install URL.
+3. Build a `site_map` list for all major views/pages when the app has multiple views/pages (examples: `#settings`, `/pricing`, `about.html`).
+4. Deploy to production with `POST /api/deploy`, `update_existing=true`, and `site_map` when available. If `site_map` is omitted, the server captures `/` by default.
+5. Reply only with `app_id`, app URL, and install URL when one exists.
 
 Do not stop at local files when production deployment is possible. Use local dev only when explicitly requested or targeted.
 
@@ -87,6 +88,14 @@ Include an `app.json` in the ZIP root:
 }
 ```
 
+### Screenshots (Mandatory)
+- Keep screenshots small:
+  - landscape: `1366x768`
+  - portrait: `768x1366`
+- Provide all major app views in `site_map` during deploy; server auto-captures both orientations for each entry.
+- If no `site_map` is provided, the server captures the front page (`/`) in both orientations.
+- Prefer concise page/view coverage over redundant near-duplicate routes.
+
 ## Endpoints
 
 | Environment | Base URL | Deploy | List |
@@ -100,39 +109,32 @@ Use production for real deployments.
 
 ## Deploy
 
-Create a ZIP of your app, then deploy with curl:
+Create a ZIP of your app, base64-encode it, then deploy with curl:
 
 ```bash
-curl -X POST <BASE_URL>/api/deploy \
-  -H "Content-Type: application/json" \
-  -d '{
-    "app_id": "my-app",
-    "zip_file_path": "/absolute/path/to/app.zip",
-    "app_type": "web_app",
-    "update_existing": true
-  }'
-```
-
-Set `app_type` to categorize the app:
-- `web_app` (default) — interactive web applications
-- `website` — informational/marketing sites
-- `game` — browser games
-
-All types get an install page, manifest, service worker, and icons automatically.
-
-### Alternative: base64 ZIP upload
-
-```bash
-ZIP_B64=$(base64 < /path/to/app.zip)
+ZIP_B64=$(base64 < /path/to/app.zip | tr -d '\n')
 curl -X POST <BASE_URL>/api/deploy \
   -H "Content-Type: application/json" \
   -d "{
     \"app_id\": \"my-app\",
     \"zip_b64\": \"$ZIP_B64\",
-    \"app_type\": \"web_app\",
-    \"update_existing\": true
+    \"app_type\": \"<web_app|website|game>\",
+    \"update_existing\": true,
+    \"site_map\": [\"/\", \"#settings\", \"/pricing\", \"about.html\"]
   }"
 ```
+
+Set `app_type` to categorize the app:
+- `website` — informational/marketing sites, landing pages, company sites, restaurant/kitchen/studio sites, portfolios, blogs, documentation, and other content-first sites
+- `web_app` — interactive applications, dashboards, tools, authenticated apps, productivity apps, and app-like utilities
+- `game` — browser games
+
+If the user asks for a "site", "website", "landing page", "homepage", "marketing page", "portfolio", "blog", "docs", "restaurant site", or similar content-first project, deploy with `app_type: "website"`.
+
+Do not republish a website as `web_app` just to get PWA install behavior. Website deploys intentionally keep `app_type: "website"` and still get an Anyclaw store/detail page at `/install`.
+
+All app types get an Anyclaw store/detail page at `/install`. Only `web_app` and `game` deploys get manifests, service workers, PWA icons, and an install button on that page. `website` deploys do not get PWA assets or install prompts.
+
 
 ## List apps
 
@@ -143,7 +145,7 @@ curl <BASE_URL>/api/apps
 ## URL Structure
 
 - App: `<base>/<claim-id>/<app-id>/`
-- Install page: `<base>/<claim-id>/<app-id>/install`
+- Install page for apps/games: `<base>/<claim-id>/<app-id>/install`
 - Listing: `<base>/`
 
 ## Completion reply
@@ -153,6 +155,8 @@ After successful deployment, reply with a short, friendly, non-technical message
 > Your app is live! Open it here: <app-url>
 > Install page: <install-url>
 
+For `website` deploys, include the store/detail page link, but do not describe it as a PWA install flow.
+
 Do not dump raw JSON or technical deployment details. Just share the links.
 
 ## Common mistakes to avoid
@@ -161,11 +165,13 @@ Do not dump raw JSON or technical deployment details. Just share the links.
 - Do NOT forget to close the browser after screenshots
 - Do NOT create dark/black SVG icons — use bright, vibrant colors
 - Do NOT skip the `app_type` param — set it to match your app's category
+- Do NOT change `app_type` from `website` to `web_app` to get PWA install behavior; websites have a store/detail page but no PWA install button
+- Do NOT skip `site_map` when there are multiple important views/pages; single-page apps can rely on the server default front-page screenshots
 - Do NOT dump raw JSON responses — give the user a friendly message with links
 - Do NOT create the ZIP path with spaces — use hyphens in names
 
 ## Response handling
 
-- Always return `app_id`, `url`, and `install_url` after publish.
+- Always return `app_id`, `url`, and `install_url` after publish. For websites, `install_url` points to the Anyclaw store/detail page.
 - If deploy fails, return the full API error and the command used.
 - Prefer `update_existing=true` for iterative updates unless user asks for strict create-only behavior.
