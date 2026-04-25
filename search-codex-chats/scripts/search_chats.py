@@ -6,7 +6,7 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 BASES = [
     Path('/Users/igor/.codex/sessions'),
@@ -18,6 +18,8 @@ BOILERPLATE_PREFIXES = (
     '<environment_context>',
     '<skills_instructions>',
     '<plugins_instructions>',
+    '<skill>',
+    '<subagent_notification>',
     '# AGENTS.md instructions for ',
     '<INSTRUCTIONS>',
 )
@@ -89,6 +91,10 @@ def get_thread_id(path: Path) -> str:
 
 def normalize(s: str) -> str:
     return re.sub(r'\s+', ' ', s).strip()
+
+
+def output_cell(s: str, max_chars: int = 220) -> str:
+    return normalize(s)[:max_chars]
 
 
 def normalize_path(s: str) -> str:
@@ -257,6 +263,82 @@ def looks_like_regex(query: Optional[str]) -> bool:
     return bool(re.search(r'[|()[\]{}.*+?\\]', query))
 
 
+def split_simple_title_terms(query: Optional[str]) -> List[str]:
+    if not query:
+        return []
+    terms = [term.strip() for term in query.split('|')]
+    if not terms or any(not term for term in terms):
+        return []
+    if any(re.search(r'[()[\]{}.*+?\\]', term) for term in terms):
+        return []
+    return terms
+
+
+def title_search_text(title: str) -> str:
+    for line in title.splitlines():
+        line = line.strip()
+        if line:
+            return line[:260]
+    return title[:260]
+
+
+def term_boundary_pattern(term: str) -> re.Pattern:
+    return re.compile(rf'(?<![A-Za-z0-9]){re.escape(term)}[A-Za-z0-9-]*', re.IGNORECASE)
+
+
+def build_title_scorer(args: argparse.Namespace) -> Callable[[str], int]:
+    title_query = args.title_query or args.query
+    simple_terms = split_simple_title_terms(title_query)
+    if simple_terms:
+        boundary_patterns = [(term, term_boundary_pattern(term)) for term in simple_terms]
+
+        def score(title: str) -> int:
+            searchable_title = title_search_text(title)
+            title_lower = searchable_title.lower()
+            total = 0
+            for term, pattern in boundary_patterns:
+                term_lower = term.lower()
+                if pattern.search(searchable_title):
+                    total += 10 + min(len(term_lower), 8)
+                elif len(term_lower) >= 8 and term_lower in title_lower:
+                    total += 3
+            return total
+
+        return score
+
+    title_matcher = build_title_matcher(args)
+    return lambda title: 1 if title_matcher(title) else 0
+
+
+def code_like_term(term: str) -> bool:
+    return bool(re.search(r'[-_/]', term) or re.search(r'[a-z][A-Z]', term))
+
+
+def build_text_scorer(query: Optional[str]) -> Callable[[str], int]:
+    terms = split_simple_title_terms(query)
+    if not terms and query:
+        terms = [query]
+    normalized_terms = [term.lower() for term in terms if term]
+
+    def score(text: str) -> int:
+        text_lower = text.lower()
+        total = 0
+        for term, term_lower in zip(terms, normalized_terms):
+            if term_lower not in text_lower:
+                continue
+            if code_like_term(term):
+                total += 30
+            elif len(term_lower) >= 10:
+                total += 18
+            elif len(term_lower) >= 7:
+                total += 10
+            else:
+                total += 4
+        return total
+
+    return score
+
+
 def build_text_matcher(args: argparse.Namespace):
     if args.list_projects and not args.query:
         return lambda s: True
@@ -320,21 +402,25 @@ def apply_limit(items: List, limit: Optional[int]) -> List:
 def should_use_rg_prefilter(args: argparse.Namespace) -> bool:
     return bool(
         args.query
-        and args.query_mode in ('auto', 'literal')
-        and not args.regex
+        and args.query_mode in ('auto', 'literal', 'regex', 'hybrid')
         and not args.list_projects
         and not args.threads_only
         and not args.threads_with_titles
     )
 
 
-def candidate_files_via_rg(query: str) -> Optional[List[Path]]:
+def candidate_files_via_rg(query: str, regex: bool) -> Optional[List[Path]]:
     bases = [str(base) for base in BASES if base.exists()]
     if not bases:
         return []
+    command = ['rg', '--files-with-matches', '--ignore-case', '--glob', '*.jsonl']
+    if regex:
+        command.extend(['--regexp', query])
+    else:
+        command.extend(['--fixed-strings', query])
     try:
         completed = subprocess.run(
-            ['rg', '--files-with-matches', '--fixed-strings', '--glob', '*.jsonl', query, *bases],
+            [*command, *bases],
             check=False,
             capture_output=True,
             text=True,
@@ -351,7 +437,7 @@ def candidate_files_via_rg(query: str) -> Optional[List[Path]]:
 
 def candidate_jsonl_files(args: argparse.Namespace) -> List[Path]:
     if should_use_rg_prefilter(args):
-        rg_files = candidate_files_via_rg(args.query)
+        rg_files = candidate_files_via_rg(args.query, args.regex or args.query_mode == 'regex')
         if rg_files is not None:
             return rg_files
     return all_jsonl_files()
@@ -445,53 +531,77 @@ def print_list_projects(projects: Dict[str, int], project_matcher) -> int:
 
 def collect_title_results(
     thread_rows: List[Tuple[str, str, str, int]],
-    title_matcher,
+    title_scorer: Callable[[str], int],
     project_matcher,
-) -> List[Tuple[str, str, str, int]]:
+) -> List[Tuple[str, str, str, int, int]]:
     return [
-        (thread_id, title, cwd, created_at_ms)
+        (thread_id, title, cwd, created_at_ms, score)
         for thread_id, title, cwd, created_at_ms in thread_rows
-        if project_matcher(cwd) and title_matcher(title)
+        if project_matcher(cwd)
+        for score in [title_scorer(title)]
+        if score > 0
     ]
 
 
-def sort_title_results(args: argparse.Namespace, rows: List[Tuple[str, str, str, int]]) -> List[Tuple[str, str, str, int]]:
-    if args.sort_threads_by_date or args.newest_first:
+def sort_title_results(
+    args: argparse.Namespace,
+    rows: List[Tuple[str, str, str, int, int]],
+    rank_by_score: bool = False,
+) -> List[Tuple[str, str, str, int, int]]:
+    if rank_by_score:
+        rows = sorted(rows, key=lambda item: (item[4], item[3], item[0]), reverse=True)
+    elif args.sort_threads_by_date or args.newest_first:
         rows = sorted(rows, key=lambda item: (item[3], item[0]), reverse=args.newest_first)
     else:
-        rows = sorted(rows, key=lambda item: item[0])
+        rows = sorted(rows, key=lambda item: (-item[4], item[0]))
     return apply_limit(rows, args.limit)
 
 
-def print_title_results(rows: List[Tuple[str, str, str, int]], args: argparse.Namespace) -> int:
+def print_title_results(rows: List[Tuple[str, str, str, int, int]], args: argparse.Namespace) -> int:
     rows = sort_title_results(args, rows)
     print(f'matches={len(rows)}')
     print(f'threads={len({row[0] for row in rows})}')
     print(f'projects={len({row[2] for row in rows if row[2]})}')
-    for thread_id, title, cwd, created_at_ms in rows:
+    for thread_id, title, cwd, created_at_ms, score in rows:
         ts = format_created_at_ms(created_at_ms)
-        print(f'{ts}\t{thread_id}\t{cwd}\tstate_5.sqlite:title\t{title[:220]}')
+        print(f'{ts}\t{thread_id}\t{cwd}\tstate_5.sqlite:title:score={score}\t{output_cell(title)}')
     return 0
 
 
 def print_hybrid_results(
     args: argparse.Namespace,
-    title_rows: List[Tuple[str, str, str, int]],
+    title_rows: List[Tuple[str, str, str, int, int]],
     text_results: List[Tuple[str, str, str, Path, int, str]],
 ) -> int:
-    title_rows = sort_title_results(args, title_rows)
+    snippet_thread_ids = {row[1] for row in text_results if row[1]}
+    if snippet_thread_ids:
+        title_rows = [row for row in title_rows if row[0] in snippet_thread_ids or row[4] >= 17]
+    title_rows = sort_title_results(args, title_rows, rank_by_score=True)
+    if args.title_limit is not None:
+        title_rows = apply_limit(title_rows, args.title_limit)
+    elif args.limit is not None and args.limit >= 0:
+        title_rows = apply_limit(title_rows, max(1, min(3, args.limit // 2 or 1)))
     preferred_thread_ids = {row[0] for row in title_rows}
     synthetic_title_results = [
-        (format_created_at_ms(created_at_ms), thread_id, cwd, Path('state_5.sqlite'), 0, title, 'title')
-        for thread_id, title, cwd, created_at_ms in title_rows
+        (format_created_at_ms(created_at_ms), thread_id, cwd, Path('state_5.sqlite'), 0, output_cell(title), f'title:score={score}')
+        for thread_id, title, cwd, created_at_ms, score in title_rows
     ]
+    text_scorer = build_text_scorer(args.query)
     ranked_snippets = sorted(
         text_results,
-        key=lambda row: (row[1] not in preferred_thread_ids, row[0]),
+        key=lambda row: (row[1] in preferred_thread_ids, text_scorer(row[5]), row[0]),
         reverse=args.newest_first,
     )
     combined = synthetic_title_results + [
-        (ts, tid, project, path, line_no, text, 'preferred-snippet' if tid in preferred_thread_ids else 'snippet')
+        (
+            ts,
+            tid,
+            project,
+            path,
+            line_no,
+            text,
+            f'preferred-snippet:score={text_scorer(text)}' if tid in preferred_thread_ids else f'snippet:score={text_scorer(text)}',
+        )
         for ts, tid, project, path, line_no, text in ranked_snippets
     ]
     combined = apply_limit(combined, args.limit)
@@ -499,7 +609,7 @@ def print_hybrid_results(
     print(f'threads={len({row[1] for row in combined if row[1]})}')
     print(f'projects={len({row[2] for row in combined if row[2]})}')
     for ts, tid, project, path, line_no, text, kind in combined:
-        print(f'{ts}\t{tid}\t{project}\t{path}:{line_no}:{kind}\t{text[:220]}')
+        print(f'{ts}\t{tid}\t{project}\t{path}:{line_no}:{kind}\t{output_cell(text)}')
     return 0
 
 
@@ -539,14 +649,14 @@ def print_search_results(
         threads = apply_limit(threads, args.limit)
         print(f'threads={len(threads)}')
         for t in threads:
-            print(f'{t}\t{titles_by_thread.get(t, "(untitled)")}')
+            print(f'{t}\t{output_cell(titles_by_thread.get(t, "(untitled)"))}')
         return 0
 
     print(f'matches={len(results)}')
     print(f'threads={len({r[1] for r in results if r[1]})}')
     print(f'projects={len({r[2] for r in results if r[2]})}')
     for ts, tid, project, path, line_no, text in results:
-        snippet = text[:220]
+        snippet = output_cell(text)
         print(f'{ts}\t{tid}\t{project}\t{path}:{line_no}\t{snippet}')
     return 0
 
@@ -566,6 +676,7 @@ def main() -> int:
     parser.add_argument('--sort-threads-by-date', action='store_true', help='Sort thread listings by created date instead of thread id')
     parser.add_argument('--newest-first', action='store_true', help='Reverse date or match ordering so the newest results come first')
     parser.add_argument('--limit', type=int, help='Cap the number of returned rows after sorting')
+    parser.add_argument('--title-limit', type=int, help='Cap title rows in hybrid output before adding snippets')
     parser.add_argument('--include-boilerplate', action='store_true', help='Include system/developer instructions and injected preambles in search text')
     parser.add_argument('--state-db', default=str(Path.home() / '.codex/state_5.sqlite'), help='Path to Codex state sqlite database used for thread metadata')
     parser.add_argument('--dedupe', dest='dedupe', action='store_true', default=True, help='Dedupe by (thread_id, normalized_text)')
@@ -581,7 +692,7 @@ def main() -> int:
     try:
         matcher = build_text_matcher(args)
         project_matcher = build_project_matcher(args)
-        title_matcher = build_title_matcher(args)
+        title_scorer = build_title_scorer(args)
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -606,7 +717,7 @@ def main() -> int:
                     print(thread_id)
             else:
                 for thread_id, title, _ in filtered_threads:
-                    print(f'{thread_id}\t{title}')
+                    print(f'{thread_id}\t{output_cell(title)}')
             return 0
 
     candidate_files = candidate_jsonl_files(args)
@@ -623,7 +734,7 @@ def main() -> int:
         return print_list_projects(projects, project_matcher)
 
     if args.query_mode == 'title':
-        title_results = collect_title_results(thread_rows, title_matcher, project_matcher)
+        title_results = collect_title_results(thread_rows, title_scorer, project_matcher)
         return print_title_results(title_results, args)
 
     results, _, matching_threads = collect_search_results(
@@ -634,7 +745,7 @@ def main() -> int:
         include_boilerplate=args.include_boilerplate,
     )
     if args.query_mode == 'hybrid':
-        title_results = collect_title_results(thread_rows, title_matcher, project_matcher)
+        title_results = collect_title_results(thread_rows, title_scorer, project_matcher)
         return print_hybrid_results(args, title_results, results)
     return print_search_results(args, results, matching_threads, state_db_path)
 

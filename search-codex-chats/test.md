@@ -36,7 +36,7 @@ Analyze likely threads/topics first:
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
   --project "/Users/igor/Git-projects/codex-web-local" \
-  --title-query "persist|draft|workspace|rename|localstorage|pinned|scroll" \
+  --title-query "persistence|draft|workspace-roots|localstorage|pinned|scroll" \
   --query-mode title \
   --newest-first \
   --limit 15
@@ -58,7 +58,7 @@ Structured text search:
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
   --project "/Users/igor/Git-projects/codex-web-local" \
-  --query "workspace-roots-state|localStorage|thread-draft|persist|persistence" \
+  --query "workspace-roots-state|localStorage|thread-draft|persistence" \
   --regex \
   --dedupe \
   --newest-first \
@@ -123,6 +123,7 @@ For each technique, record:
 - end-to-end `codex exec` time
 - did it use the intended method?
 - were the results clean and relevant?
+- did thread-title output stay one row per thread?
 - what failed?
 
 ## How to judge

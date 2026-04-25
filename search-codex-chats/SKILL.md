@@ -6,14 +6,17 @@ description: Search local Codex chat history by project, thread title, or messag
 # Search Codex Chats
 
 Use this skill when the user wants full-text search over local Codex chats.
+Use the bundled script for normal answers. Raw `rg` is only for debugging or quick existence checks.
 
 ## Scope
 
 Search these sources:
 - `/Users/igor/.codex/sessions`
 - `/Users/igor/.codex/archived_sessions`
+- `/Users/igor/.codex/state_5.sqlite` for thread metadata
 
 Prefer structured extraction from JSONL message fields to avoid false positives from encrypted/reasoning blobs.
+Do not inspect `/Users/igor/.codex/memories/MEMORY.md` for normal chat-history answers; it is a registry/summary source, not the raw chat corpus.
 
 ## Workflow
 
@@ -29,7 +32,7 @@ python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/searc
 
 If the user really wants threads about a topic rather than body-text matches, prefer title query:
 ```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --title-query "persist|draft|workspace|rename|localstorage" --query-mode title --newest-first --limit 8
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --title-query "persistence|draft|workspace-roots|localstorage" --query-mode title --newest-first --limit 8
 ```
 
 3. Filter by exact absolute project/cwd path:
@@ -48,7 +51,7 @@ python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/searc
 
 For better "useful hits" ranking, use hybrid mode:
 ```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "workspace-roots-state|localStorage|thread-draft|persist|persistence" --title-query "persist|draft|workspace|rename|localstorage" --query-mode hybrid --regex --newest-first --limit 10
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "workspace-roots-state|localStorage|thread-draft|persistence" --title-query "persistence|draft|workspace-roots|localstorage" --query-mode hybrid --regex --newest-first --limit 10 --title-limit 2
 ```
 
 5. List discovered projects:
@@ -93,7 +96,8 @@ Return:
 - unique thread IDs
 - unique project/cwd count
 - for each match: timestamp, thread ID, project/cwd, file:line, short snippet
+- script rows are tab-separated and title/snippet cells are normalized to one line
 
 When relevant, deduplicate mirrored pairs (`event_msg` and `response_item`) by `(thread_id, normalized_text)`.
 
-Normal search output excludes injected developer/system preambles by default so results are more useful for actual chat-content queries.
+Normal search output excludes injected developer/system preambles, skill blocks, and subagent notifications by default so results are more useful for actual chat-content queries.
