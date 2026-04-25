@@ -12,7 +12,6 @@ Compare which approach works best for:
 Main techniques:
 - raw `rg`
 - structured `search_chats.py`
-- `zvec` semantic search
 
 ## Sources
 
@@ -61,7 +60,7 @@ rg -l -g "*.jsonl" \
 Create one workspace per technique:
 
 ```bash
-mkdir -p /private/tmp/skill-bench/{rg-technique,script-technique,zvec-technique}/.agents/skills
+mkdir -p /private/tmp/skill-bench/{rg-technique,script-technique}/.agents/skills
 ```
 
 Put one local skill variant in each workspace and keep the task identical.
@@ -69,7 +68,6 @@ Put one local skill variant in each workspace and keep the task identical.
 Recommended local variant names:
 - `chat-search-rg`
 - `chat-search-script`
-- `chat-search-zvec`
 
 Run each variant with the same prompt shape:
 
@@ -81,19 +79,6 @@ codex exec \
   -o /private/tmp/skill-bench/script-technique/result.txt \
   'Use the chat-search-script skill. For /Users/igor/Git-projects/codex-web-local, list the latest 3 threads with titles, then find 5 useful hits about persistence or memory behavior. Prefer the shortest reliable path. If something fails, explain it precisely.'
 ```
-
-If testing `zvec`, use `workspace-write` and an explicit writable corpus dir:
-
-```bash
-codex exec \
-  --skip-git-repo-check \
-  --sandbox workspace-write \
-  --cd /private/tmp/skill-bench/zvec-technique \
-  -o /private/tmp/skill-bench/zvec-technique/result.txt \
-  'Use the chat-search-zvec skill. For /Users/igor/Git-projects/codex-web-local, list the latest 3 threads with titles, then run semantic search. If zvec fails, report the exact error.'
-```
-
-The underlying command must use `--zvec-corpus-dir /tmp/...` or another writable temp path, because the default corpus dir under `~/.codex` may be blocked in sandboxed runs.
 
 ## What to compare
 
@@ -108,8 +93,6 @@ For each technique, record:
 
 - Best raw speed: usually `rg`
 - Best final answer quality: usually `search_chats.py`
-- Best semantic search: `zvec`, only if corpus export and local HTTP ingest/search both work
-
 Do not judge only by primitive speed. Judge the full agent workflow.
 
 ## Current practical default
@@ -120,8 +103,3 @@ Use `rg` for:
 - fast forensic checks
 - confirming whether a string exists at all
 - debugging raw session files
-
-Use `zvec` only when:
-- the service is reachable
-- the corpus dir is writable
-- local HTTP calls to the service are allowed

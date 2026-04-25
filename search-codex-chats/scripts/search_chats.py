@@ -3,11 +3,8 @@ import argparse
 import hashlib
 import json
 import re
-import shutil
 import sqlite3
 import subprocess
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -127,11 +124,6 @@ def project_path_matcher(project_path: str):
         return in_same_project_family(project_path_norm, candidate_norm)
 
     return match
-
-
-def safe_name(s: str) -> str:
-    name = re.sub(r'[^A-Za-z0-9_.-]+', '-', s).strip('-')
-    return name[:80] or 'unknown'
 
 
 def load_thread_titles(db_path: Path) -> Dict[str, str]:
@@ -292,71 +284,6 @@ def session_text(lines: List[str], max_chars: int = 12000, include_boilerplate: 
     return '\n\n'.join(parts)
 
 
-def write_zvec_corpus(
-    sessions: List[Tuple[str, str, str, Path, List[str]]],
-    out_dir: Path,
-    max_chars_per_session: int = 12000,
-    include_boilerplate: bool = False,
-) -> Tuple[int, int]:
-    try:
-        if out_dir.exists():
-            shutil.rmtree(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise RuntimeError(
-            f'zvec corpus dir is not writable: {out_dir} ({exc})'
-        ) from exc
-
-    written = 0
-    for ts, thread_id, project, path, lines in sessions:
-        text = session_text(lines, max_chars=max_chars_per_session, include_boilerplate=include_boilerplate)
-        if not text:
-            continue
-        digest = hashlib.sha1(str(path).encode('utf-8')).hexdigest()[:12]
-        target = out_dir / f'{safe_name(thread_id or path.stem)}-{digest}.md'
-        try:
-            target.write_text(
-                '\n'.join([
-                    f'# Codex Chat {thread_id or path.stem}',
-                    '',
-                    f'- timestamp: {ts}',
-                    f'- project: {project}',
-                    f'- source: {path}',
-                    '',
-                    text,
-                    '',
-                ]),
-                encoding='utf-8',
-            )
-        except OSError as exc:
-            raise RuntimeError(
-                f'failed to write zvec corpus file: {target} ({exc})'
-            ) from exc
-        written += 1
-    return written, sum(1 for _ in out_dir.glob('*.md'))
-
-
-def post_json(url: str, payload: Dict, timeout: int = 120) -> Dict:
-    body = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as res:
-            return json.loads(res.read().decode('utf-8'))
-    except (TimeoutError, urllib.error.URLError) as exc:
-        reason = getattr(exc, 'reason', exc)
-        if isinstance(reason, PermissionError):
-            raise RuntimeError(
-                f'zvec local HTTP request was blocked for {url}: {reason}. '
-                'This usually means the current sandbox blocks localhost access.'
-            ) from exc
-        raise RuntimeError(f'zvec request failed for {url}: {exc}') from exc
-
-
 def apply_limit(items: List, limit: Optional[int]) -> List:
     if limit is None or limit < 0:
         return items
@@ -370,9 +297,6 @@ def should_use_rg_prefilter(args: argparse.Namespace) -> bool:
         and not args.list_projects
         and not args.threads_only
         and not args.threads_with_titles
-        and not args.zvec_export_dir
-        and not args.zvec_ingest
-        and not args.zvec_search
     )
 
 
@@ -408,10 +332,7 @@ def candidate_jsonl_files(args: argparse.Namespace) -> List[Path]:
 def collect_sessions(
     candidate_files: List[Path],
     project_matcher,
-    zvec_mode: bool,
-    zvec_max_sessions: Optional[int],
-) -> Tuple[List[Tuple[str, str, str, Path, List[str]]], Dict[str, int], set]:
-    zvec_sessions: List[Tuple[str, str, str, Path, List[str]]] = []
+ ) -> Tuple[Dict[str, int], set]:
     projects: Dict[str, int] = {}
     matching_threads = set()
 
@@ -432,12 +353,7 @@ def collect_sessions(
         if thread_id:
             matching_threads.add(thread_id)
 
-        if zvec_mode:
-            if zvec_max_sessions is not None and len(zvec_sessions) >= zvec_max_sessions:
-                continue
-            zvec_sessions.append((first_session_timestamp(lines), thread_id, project, file, lines))
-
-    return zvec_sessions, projects, matching_threads
+    return projects, matching_threads
 
 
 def collect_search_results(
@@ -497,63 +413,6 @@ def print_list_projects(projects: Dict[str, int], project_matcher) -> int:
     for project, count in filtered:
         print(f'{count}\t{project}')
     return 0
-
-
-def run_zvec_mode(args: argparse.Namespace, zvec_sessions: List[Tuple[str, str, str, Path, List[str]]]) -> int:
-    corpus_dir = Path(args.zvec_export_dir or args.zvec_corpus_dir).expanduser()
-    try:
-        sessions_written, files_written = write_zvec_corpus(
-            zvec_sessions,
-            corpus_dir,
-            max_chars_per_session=args.zvec_max_chars_per_session,
-            include_boilerplate=args.include_boilerplate,
-        )
-    except RuntimeError as exc:
-        print(f'zvec_error={exc}')
-        print('zvec_hint=pass --zvec-corpus-dir /tmp/... when running inside sandboxed codex exec sessions')
-        return 2
-    print(f'zvec_corpus={corpus_dir}')
-    print(f'zvec_sessions={sessions_written}')
-    print(f'zvec_files={files_written}')
-
-    if args.zvec_ingest or args.zvec_search:
-        try:
-            ingest = post_json(
-                f'{args.zvec_url.rstrip("/")}/ingest',
-                {'dir': str(corpus_dir), 'reset': True},
-                timeout=args.zvec_timeout,
-            )
-        except RuntimeError as exc:
-            print(f'zvec_error={exc}')
-            print('zvec_hint=service start command: bash /Users/igor/.codex/skills2/zvec-local-rag-service/scripts/manage.sh start')
-            print('zvec_hint=if service is already running, the current sandbox may be blocking localhost HTTP access')
-            return 2
-        print('zvec_ingest=' + json.dumps(ingest, ensure_ascii=False))
-
-    if args.zvec_search:
-        try:
-            search = post_json(
-                f'{args.zvec_url.rstrip("/")}/search',
-                {'query': args.query, 'topk': args.zvec_topk},
-                timeout=args.zvec_timeout,
-            )
-        except RuntimeError as exc:
-            print(f'zvec_error={exc}')
-            print('zvec_hint=service start command: bash /Users/igor/.codex/skills2/zvec-local-rag-service/scripts/manage.sh start')
-            print('zvec_hint=if service is already running, the current sandbox may be blocking localhost HTTP access')
-            return 2
-        print(f'zvec_results={len(search.get("results", []))}')
-        for item in search.get('results', []):
-            source = item.get('source', '')
-            chunk = item.get('chunkIndex', '')
-            score = item.get('score', '')
-            text = normalize(str(item.get('text', '')))[:300]
-            print(f'{score}\t{source}#{chunk}\t{text}')
-        return 0
-
-    if not args.query:
-        return 0
-    return -1
 
 
 def print_search_results(
@@ -621,23 +480,11 @@ def main() -> int:
     parser.add_argument('--state-db', default=str(Path.home() / '.codex/state_5.sqlite'), help='Path to Codex state sqlite database used for thread metadata')
     parser.add_argument('--dedupe', dest='dedupe', action='store_true', default=True, help='Dedupe by (thread_id, normalized_text)')
     parser.add_argument('--no-dedupe', dest='dedupe', action='store_false', help='Do not dedupe mirrored or repeated messages')
-    parser.add_argument('--zvec-export-dir', help='Export matching project chats as Markdown files for zvec ingestion')
-    parser.add_argument('--zvec-ingest', action='store_true', help='Export matching project chats and ingest them into the zvec RAG service')
-    parser.add_argument('--zvec-search', action='store_true', help='Run semantic search through the zvec RAG service after ingesting matching project chats')
-    parser.add_argument('--zvec-url', default='http://127.0.0.1:8787', help='Base URL for zvec-local-rag-service')
-    parser.add_argument('--zvec-topk', type=int, default=5, help='Number of zvec semantic results to return')
-    parser.add_argument('--zvec-timeout', type=int, default=600, help='Timeout in seconds for zvec ingest/search HTTP calls')
-    parser.add_argument('--zvec-max-sessions', type=int, help='Limit the number of matching Codex sessions exported to zvec')
-    parser.add_argument('--zvec-max-chars-per-session', type=int, default=12000, help='Maximum extracted characters per session for zvec export; set 0 for unlimited')
-    parser.add_argument('--zvec-corpus-dir', default='/tmp/search-codex-chats-zvec-corpus', help='Temporary corpus directory used for zvec ingest/search')
     args = parser.parse_args()
 
-    zvec_mode = args.zvec_export_dir or args.zvec_ingest or args.zvec_search
     thread_listing_mode = args.threads_only or args.threads_with_titles
-    if not args.query and not args.list_projects and not zvec_mode and not thread_listing_mode:
-        parser.error('--query is required unless --list-projects, a thread-listing mode, or a zvec export/ingest mode is used')
-    if args.zvec_search and not args.query:
-        parser.error('--query is required with --zvec-search')
+    if not args.query and not args.list_projects and not thread_listing_mode:
+        parser.error('--query is required unless --list-projects or a thread-listing mode is used')
 
     try:
         matcher = build_text_matcher(args)
@@ -671,23 +518,16 @@ def main() -> int:
 
     candidate_files = candidate_jsonl_files(args)
 
-    if args.list_projects or zvec_mode:
-        zvec_sessions, projects, matching_threads = collect_sessions(
+    if args.list_projects:
+        projects, matching_threads = collect_sessions(
             candidate_files,
             project_matcher,
-            zvec_mode=zvec_mode,
-            zvec_max_sessions=args.zvec_max_sessions,
         )
     else:
-        zvec_sessions, projects, matching_threads = [], {}, set()
+        projects, matching_threads = {}, set()
 
     if args.list_projects:
         return print_list_projects(projects, project_matcher)
-
-    if zvec_mode:
-        zvec_exit = run_zvec_mode(args, zvec_sessions)
-        if zvec_exit >= 0:
-            return zvec_exit
 
     results, _, matching_threads = collect_search_results(
         candidate_files,
