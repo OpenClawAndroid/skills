@@ -19,7 +19,28 @@ Main techniques:
 - `/Users/igor/.codex/archived_sessions`
 - `/Users/igor/.codex/state_5.sqlite`
 
+## Workflow
+
+Use this order:
+1. analyze existing chats for the target project first
+2. derive a few concrete topic questions from real prior work
+3. ask those questions through `codex exec`
+4. compare output quality and speed
+
+Do not start with a vague prompt if you can mine the project history first.
+
 ## Fast direct checks
+
+Analyze likely threads/topics first:
+
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
+  --project "/Users/igor/Git-projects/codex-web-local" \
+  --title-query "persist|draft|workspace|rename|localstorage|pinned|scroll" \
+  --query-mode title \
+  --newest-first \
+  --limit 15
+```
 
 Structured thread listing:
 
@@ -80,6 +101,21 @@ codex exec \
   'Use the chat-search-script skill. For /Users/igor/Git-projects/codex-web-local, list the latest 3 threads with titles, then find 5 useful hits about persistence or memory behavior. Prefer the shortest reliable path. If something fails, explain it precisely.'
 ```
 
+Better prompt pattern after analyzing chats first:
+
+```text
+Use the <skill-name> skill.
+For /Users/igor/Git-projects/codex-web-local, answer one concrete question from prior project history.
+Examples:
+- find threads about project persistence
+- find threads about pinned-thread persistence
+- find threads about scroll-position restore
+- find threads about thread draft restore
+Prefer title-based discovery first when the task is thematic.
+Only then pull supporting snippets.
+Keep the result concise.
+```
+
 ## What to compare
 
 For each technique, record:
@@ -103,3 +139,12 @@ Use `rg` for:
 - fast forensic checks
 - confirming whether a string exists at all
 - debugging raw session files
+
+## Recommended test questions
+
+Good project-specific questions for this repo:
+- Which threads are about project persistence?
+- Which threads are about pinned-thread persistence?
+- Which threads are about scroll position per thread?
+- Which threads are about draft restore after refresh or thread switch?
+- Which threads mention `workspace-roots-state`, `threadWorkspaceRootHints`, `project-order`, or `composerThreadContextId`?
