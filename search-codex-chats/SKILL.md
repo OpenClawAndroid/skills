@@ -76,31 +76,6 @@ If you intentionally need injected app/skill instructions in matches, opt back i
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "memory" --include-boilerplate
 ```
 
-8. Export exact-project chats as a zvec-ready Markdown corpus:
-```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --zvec-export-dir /tmp/codex-web-local-chat-corpus
-```
-
-9. Ingest exact-project chats into the local zvec RAG service:
-```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --zvec-ingest
-```
-
-10. Run semantic search through zvec over exact-project chats:
-```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "why did we add memory hooks" --zvec-search --zvec-topk 5
-```
-
-For a faster smoke test on large projects, cap the exported sessions:
-```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "memory hooks" --zvec-search --zvec-max-sessions 10 --zvec-max-chars-per-session 4000
-```
-
-Zvec integration expects `zvec-local-rag-service` to be running at `http://127.0.0.1:8787`. Start it with:
-```bash
-/Users/igor/.codex/skills2/zvec-local-rag-service/scripts/manage.sh start
-```
-
 ## Output conventions
 
 Return:
@@ -112,5 +87,3 @@ Return:
 When relevant, deduplicate mirrored pairs (`event_msg` and `response_item`) by `(thread_id, normalized_text)`.
 
 Normal search output excludes injected developer/system preambles by default so results are more useful for actual chat-content queries.
-
-For zvec semantic search, prefer exact absolute project paths so the temporary vector index is scoped to one project and not polluted by similarly named worktrees.
