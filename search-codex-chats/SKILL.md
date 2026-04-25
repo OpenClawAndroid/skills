@@ -1,6 +1,6 @@
 ---
 name: search-codex-chats
-description: Search all local Codex chat logs for keywords or phrases across sessions and archived_sessions, returning matching thread IDs, project/cwd values, timestamps, paths, and snippets. Use when the user asks to scan chats, find mentions, filter chats by project, or locate historical messages in Codex.
+description: Search local Codex chat history by project, thread title, or message text across sessions and archived_sessions, returning thread IDs, project/cwd values, timestamps, and snippets. Use when the user asks to find prior chats, filter history to one project, discover threads about a topic, or locate historical Codex messages.
 ---
 
 # Search Codex Chats
