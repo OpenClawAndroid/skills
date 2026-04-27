@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 import argparse
-import math
 import json
 import re
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 BASES = [
     Path('/Users/igor/.codex/sessions'),
@@ -340,62 +339,9 @@ def build_text_scorer(query: Optional[str]) -> Callable[[str], int]:
     return score
 
 
-def tokenize_bm25(text: str) -> List[str]:
-    return re.findall(r'[A-Za-z0-9][A-Za-z0-9_-]*', text.lower())
-
-
-def bm25_scores(query: Optional[str], documents: Sequence[str], k1: float = 1.5, b: float = 0.75) -> List[float]:
-    if not query or not documents:
-        return [0.0 for _ in documents]
-
-    query_terms = tokenize_bm25(query)
-    if not query_terms:
-        return [0.0 for _ in documents]
-
-    tokenized_docs = [tokenize_bm25(doc) for doc in documents]
-    doc_lengths = [len(tokens) for tokens in tokenized_docs]
-    avgdl = sum(doc_lengths) / len(doc_lengths) if doc_lengths else 0.0
-    if avgdl <= 0:
-        return [0.0 for _ in documents]
-
-    term_doc_freq: Dict[str, int] = {}
-    for term in set(query_terms):
-        term_doc_freq[term] = sum(1 for tokens in tokenized_docs if term in tokens)
-
-    scores: List[float] = []
-    for tokens, doc_len in zip(tokenized_docs, doc_lengths):
-        score = 0.0
-        tf_counts: Dict[str, int] = {}
-        for token in tokens:
-            tf_counts[token] = tf_counts.get(token, 0) + 1
-        for term in query_terms:
-            freq = tf_counts.get(term, 0)
-            if freq <= 0:
-                continue
-            df = term_doc_freq.get(term, 0)
-            idf = math.log(1 + ((len(documents) - df + 0.5) / (df + 0.5)))
-            denom = freq + k1 * (1 - b + b * (doc_len / avgdl))
-            score += idf * ((freq * (k1 + 1)) / denom)
-        scores.append(score)
-    return scores
-
-
-def prefilter_terms_for_query(args: argparse.Namespace) -> List[str]:
-    if not args.query:
-        return []
-    if args.ranker == 'bm25' and not args.regex:
-        return list(dict.fromkeys(tokenize_bm25(args.query)))
-    return [args.query]
-
-
 def build_text_matcher(args: argparse.Namespace):
     if args.list_projects and not args.query:
         return lambda s: True
-    if args.ranker == 'bm25' and args.query and not args.regex:
-        terms = tokenize_bm25(args.query)
-        if not terms:
-            return lambda s: False
-        return lambda s: any(term in s.lower() for term in terms)
     return build_matcher(args.query, args.regex or args.query_mode == 'regex')
 
 
@@ -463,19 +409,15 @@ def should_use_rg_prefilter(args: argparse.Namespace) -> bool:
     )
 
 
-def candidate_files_via_rg(terms: Sequence[str], regex: bool) -> Optional[List[Path]]:
+def candidate_files_via_rg(query: str, regex: bool) -> Optional[List[Path]]:
     bases = [str(base) for base in BASES if base.exists()]
     if not bases:
         return []
-    if not terms:
-        return None
     command = ['rg', '--files-with-matches', '--ignore-case', '--glob', '*.jsonl']
     if regex:
-        command.extend(['--regexp', terms[0]])
+        command.extend(['--regexp', query])
     else:
-        for term in terms:
-            command.extend(['-e', term])
-        command.append('--fixed-strings')
+        command.extend(['--fixed-strings', query])
     try:
         completed = subprocess.run(
             [*command, *bases],
@@ -495,10 +437,7 @@ def candidate_files_via_rg(terms: Sequence[str], regex: bool) -> Optional[List[P
 
 def candidate_jsonl_files(args: argparse.Namespace) -> List[Path]:
     if should_use_rg_prefilter(args):
-        rg_files = candidate_files_via_rg(
-            prefilter_terms_for_query(args),
-            args.regex or args.query_mode == 'regex',
-        )
+        rg_files = candidate_files_via_rg(args.query, args.regex or args.query_mode == 'regex')
         if rg_files is not None:
             return rg_files
     return all_jsonl_files()
@@ -647,37 +586,20 @@ def print_hybrid_results(
         (format_created_at_ms(created_at_ms), thread_id, cwd, Path('state_5.sqlite'), 0, output_cell(title), f'title:score={score}')
         for thread_id, title, cwd, created_at_ms, score in title_rows
     ]
-    if args.ranker == 'bm25':
-        text_score_values = bm25_scores(args.query, [row[5] for row in text_results])
-        ranked_rows = list(zip(text_results, text_score_values))
-        ranked_rows.sort(
-            key=lambda item: (
-                item[0][1] in preferred_thread_ids,
-                item[1],
-                item[0][0] if args.newest_first else '',
-            ),
-            reverse=True,
-        )
-        ranked_snippets = [row for row, _ in ranked_rows]
-        text_score_map = {
-            (row[0], row[1], row[3], row[4]): score
-            for row, score in ranked_rows
-        }
-    else:
-        text_scorer = build_text_scorer(args.query)
-        ranked_snippets = sorted(
-            text_results,
-            key=lambda row: (
-                row[1] in preferred_thread_ids,
-                text_scorer(row[5]),
-                row[0] if args.newest_first else '',
-            ),
-            reverse=True,
-        )
-        text_score_map = {
-            (row[0], row[1], row[3], row[4]): float(text_scorer(row[5]))
-            for row in ranked_snippets
-        }
+    text_scorer = build_text_scorer(args.query)
+    ranked_snippets = sorted(
+        text_results,
+        key=lambda row: (
+            row[1] in preferred_thread_ids,
+            text_scorer(row[5]),
+            row[0] if args.newest_first else '',
+        ),
+        reverse=True,
+    )
+    text_score_map = {
+        (row[0], row[1], row[3], row[4]): float(text_scorer(row[5]))
+        for row in ranked_snippets
+    }
     combined = synthetic_title_results + [
         (
             ts,
@@ -687,9 +609,9 @@ def print_hybrid_results(
             line_no,
             text,
             (
-                f'preferred-snippet:{args.ranker}={text_score_map.get((ts, tid, path, line_no), 0.0):.4f}'
+                f'preferred-snippet:heuristic={text_score_map.get((ts, tid, path, line_no), 0.0):.4f}'
                 if tid in preferred_thread_ids
-                else f'snippet:{args.ranker}={text_score_map.get((ts, tid, path, line_no), 0.0):.4f}'
+                else f'snippet:heuristic={text_score_map.get((ts, tid, path, line_no), 0.0):.4f}'
             ),
         )
         for ts, tid, project, path, line_no, text in ranked_snippets
@@ -709,15 +631,7 @@ def print_search_results(
     matching_threads: set,
     state_db_path: Path,
 ) -> int:
-    if args.ranker == 'bm25' and args.query and not args.regex:
-        ranked_rows = list(zip(results, bm25_scores(args.query, [row[5] for row in results])))
-        ranked_rows.sort(
-            key=lambda item: (item[1], item[0][0] if args.newest_first else ''),
-            reverse=True,
-        )
-        results = [row for row, _ in ranked_rows]
-    else:
-        results.sort(key=lambda r: r[0], reverse=args.newest_first)
+    results.sort(key=lambda r: r[0], reverse=args.newest_first)
     results = apply_limit(results, args.limit)
     titles_by_thread, created_at_by_thread = load_thread_metadata(
         state_db_path,
@@ -764,7 +678,6 @@ def main() -> int:
     parser.add_argument('--query', help='Literal text or regex pattern')
     parser.add_argument('--title-query', help='Match against thread title and first user message via SQLite metadata')
     parser.add_argument('--query-mode', choices=['auto', 'literal', 'regex', 'title', 'hybrid'], default='auto', help='Search mode: text search, title search, or hybrid ranking')
-    parser.add_argument('--ranker', choices=['heuristic', 'bm25'], default='heuristic', help='Ranking mode for text results')
     parser.add_argument('--regex', action='store_true', help='Treat query as regex')
     parser.add_argument('--project', help='Only search sessions from this project/cwd. Absolute paths match exactly.')
     parser.add_argument('--project-regex', action='store_true', help='Treat --project as regex')
