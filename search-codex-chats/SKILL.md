@@ -54,6 +54,11 @@ For better "useful hits" ranking, use hybrid mode:
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "workspace-roots-state|localStorage|thread-draft|persistence" --title-query "persistence|draft|workspace-roots|localstorage" --query-mode hybrid --regex --newest-first --limit 10 --title-limit 2
 ```
 
+For text-heavy queries where ranking matters more than pure recency, try BM25:
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --project "/Users/igor/Git-projects/codex-web-local" --query "workspace roots state localStorage thread draft persistence" --query-mode hybrid --ranker bm25 --newest-first --limit 10 --title-limit 2
+```
+
 5. List discovered projects:
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --list-projects

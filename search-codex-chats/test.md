@@ -12,6 +12,7 @@ Compare which approach works best for:
 Main techniques:
 - raw `rg`
 - structured `search_chats.py`
+- `search_chats.py --ranker bm25`
 
 ## Sources
 
@@ -63,6 +64,19 @@ python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/searc
   --dedupe \
   --newest-first \
   --limit 10
+```
+
+BM25 text search:
+
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
+  --project "/Users/igor/Git-projects/codex-web-local" \
+  --query "workspace roots state localStorage thread draft persistence" \
+  --query-mode hybrid \
+  --ranker bm25 \
+  --newest-first \
+  --limit 10 \
+  --title-limit 2
 ```
 
 Raw `rg` search:
@@ -130,6 +144,7 @@ For each technique, record:
 
 - Best raw speed: usually `rg`
 - Best final answer quality: usually `search_chats.py`
+- Best text ranking on broad thematic queries may shift between `heuristic` and `bm25`; measure both.
 Do not judge only by primitive speed. Judge the full agent workflow.
 
 ## Current practical default
