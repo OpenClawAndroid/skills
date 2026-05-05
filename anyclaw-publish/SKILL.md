@@ -9,7 +9,7 @@ description: Build and publish beautiful web apps to Anyclaw hosting using the R
 
 Use this skill when building or publishing web apps on Anyclaw via the REST API:
 
-- `POST /api/deploy` — deploy or update an app
+- `POST /api/deploy` — upload an app and receive a claim URL
 - `GET /api/apps` — list all apps
 
 Creating, building, updating, or improving an Anyclaw app includes publishing unless the user explicitly says not to deploy.
@@ -21,8 +21,8 @@ For app creation/update requests:
 1. Create/update files, including `icon.svg` and `app.json`.
 2. ZIP the app with a no-spaces path.
 3. Build a `site_map` list for all major views/pages when the app has multiple views/pages (examples: `#settings`, `/pricing`, `about.html`).
-4. Deploy to production with `POST /api/deploy`, `update_existing=true`, and `site_map` when available. If `site_map` is omitted, the server captures `/` by default.
-5. Reply only with `app_id`, app URL, and install URL when one exists.
+4. Deploy to production with `POST /api/deploy` and `site_map` when available. If `site_map` is omitted, the server captures `/` by default.
+5. Reply only with the requested `app_id` and `claim_url` from the deploy response.
 
 Do not stop at local files when production deployment is possible. Use local dev only when explicitly requested or targeted.
 
@@ -119,7 +119,6 @@ curl -X POST <BASE_URL>/api/deploy \
     \"app_id\": \"my-app\",
     \"zip_b64\": \"$ZIP_B64\",
     \"app_type\": \"<web_app|website|game>\",
-    \"update_existing\": true,
     \"site_map\": [\"/\", \"#settings\", \"/pricing\", \"about.html\"]
   }"
 ```
@@ -133,7 +132,9 @@ If the user asks for a "site", "website", "landing page", "homepage", "marketing
 
 Do not republish a website as `web_app` just to get PWA install behavior. Website deploys intentionally keep `app_type: "website"` and still get an Anyclaw store/detail page at `/install`.
 
-All app types get an Anyclaw store/detail page at `/install`. Only `web_app` and `game` deploys get manifests, service workers, PWA icons, and an install button on that page. `website` deploys do not get PWA assets or install prompts.
+Deploy response returns `claim_token` and `claim_url`. Do not claim uploads from this skill; return the claim link to the user.
+
+All app types are claimed through the returned claim URL. Only `web_app` and `game` deploys get manifests, service workers, PWA icons, and an install button after claim. `website` deploys do not get PWA assets or install prompts.
 
 
 ## List apps
@@ -144,20 +145,16 @@ curl <BASE_URL>/api/apps
 
 ## URL Structure
 
-- App: `<base>/<claim-id>/<app-id>/`
-- Install page for apps/games: `<base>/<claim-id>/<app-id>/install`
+- Claim page: `<base>/claim/<claim-token>`
 - Listing: `<base>/`
 
 ## Completion reply
 
 After successful deployment, reply with a short, friendly, non-technical message like:
 
-> Your app is live! Open it here: <app-url>
-> Install page: <install-url>
+> Your app is uploaded! Open it here: <claim-url>
 
-For `website` deploys, include the store/detail page link, but do not describe it as a PWA install flow.
-
-Do not dump raw JSON or technical deployment details. Just share the links.
+Do not dump raw JSON or technical deployment details. Just share the claim link.
 
 ## Common mistakes to avoid
 
@@ -172,6 +169,6 @@ Do not dump raw JSON or technical deployment details. Just share the links.
 
 ## Response handling
 
-- Always return `app_id`, `url`, and `install_url` after publish. For websites, `install_url` points to the Anyclaw store/detail page.
+- Always return the requested `app_id` and `claim_url` from the deploy response.
 - If deploy fails, return the full API error and the command used.
-- Prefer `update_existing=true` for iterative updates unless user asks for strict create-only behavior.
+- Iterative updates use the same deploy flow and should still return the new claim links.
