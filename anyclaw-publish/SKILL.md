@@ -18,7 +18,7 @@ Creating, building, updating, or improving an Anyclaw app includes publishing un
 
 For app creation/update requests:
 
-1. Create/update files, including `icon.svg` and `app.json`.
+1. Create/update files, including an app icon and `app.json`.
 2. ZIP the app with a no-spaces path.
 3. Build a `site_map` list for all major views/pages when the app has multiple views/pages (examples: `#settings`, `/pricing`, `about.html`).
 4. Deploy to production with `POST /api/deploy` and `site_map` when available. If `site_map` is omitted, the server captures `/` by default.
@@ -26,12 +26,13 @@ For app creation/update requests:
 
 Do not stop at local files when production deployment is possible. Use local dev only when explicitly requested or targeted.
 
-## Design Standards (Mandatory)
+## Design Standards (Default when not specified)
 
 When stack is not specified, default to fast iteration stack:
 - HTML + Vue 3 CDN + Tailwind CDN + https://picsum.photos
 - No build step unless explicitly requested
 
+When the user does not provide design direction, use these defaults:
 - Prioritize clean, minimalist aesthetics with excellent typography, generous whitespace, and smooth interactions.
 - Use modern UI patterns: subtle shadows, rounded corners, smooth hover/focus states, and thoughtful micro-interactions.
 - Ensure every component and page looks premium, polished, and visually appealing on both desktop and mobile.
@@ -67,13 +68,14 @@ const firebaseConfig = {
 
 Every app ZIP must include these assets before deployment:
 
-### Icon (`icon.svg`)
-Generate a custom SVG icon for the app. The icon should:
+### Icon (`icon.svg` or existing PNG)
+Generate a custom SVG icon for the app unless a suitable PNG icon already exists. The icon should:
 - Be a clean, modern, recognizable symbol related to the app's purpose
 - Use **bright, vibrant colors** with good contrast — avoid dark/black backgrounds
 - Use a colored or white background with a bold accent shape
 - Work at small sizes (simple shapes, no fine detail)
-- Be placed at `icon.svg` in the project root
+- Prefer `icon.svg` in the project root for newly created icons
+- Use an existing PNG icon when the project already has a good one; place it at the ZIP root as `icon.png` or keep its existing relative path and reference that path in `app.json`
 
 
 ### App metadata (`app.json`)
