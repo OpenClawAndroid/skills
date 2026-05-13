@@ -12,6 +12,7 @@ Compare which approach works best for:
 Main techniques:
 - raw `rg`
 - structured `search_chats.py`
+- rollout-summary lookup for known thread IDs
 
 ## Sources
 
@@ -23,15 +24,33 @@ Main techniques:
 ## Workflow
 
 Use this order:
-1. search rollout summaries for candidate threads and topics first
-2. use raw session search only for exact supporting snippets or missing details
-3. derive a few concrete topic questions from real prior work
-4. ask those questions through `codex exec`
-5. compare output quality and speed
+1. if specific thread IDs are known, read rollout summaries first
+2. search raw sessions only for exact transcript evidence or missing summary details
+3. analyze existing chats for the target project
+4. derive a few concrete topic questions from real prior work
+5. ask those questions through `codex exec`
+6. compare output quality and speed
 
 Do not start with a vague prompt if you can mine the project history first.
 
 ## Fast direct checks
+
+Known-thread summary-first lookup:
+
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
+  --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" \
+  --limit 20
+```
+
+Known-thread raw fallback when exact transcript evidence is needed:
+
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
+  --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" \
+  --source sessions \
+  --query "pnpm run build"
+```
 
 Analyze likely threads/topics first:
 
@@ -147,6 +166,7 @@ Do not judge only by primitive speed. Judge the full agent workflow.
 ## Current practical default
 
 Use `search_chats.py` as the default skill path.
+For known thread IDs, use `--thread-id` first; default `--source auto` returns rollout-summary evidence before raw chat.
 For broad thematic discovery, start with `--source summaries`, then use raw session search for precise quotes or transcript evidence.
 
 Use `rg` for:

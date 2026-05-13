@@ -466,6 +466,37 @@ def candidate_jsonl_files(args: argparse.Namespace) -> List[Path]:
     return all_jsonl_files()
 
 
+def parse_thread_ids(values: Optional[List[str]]) -> set:
+    thread_ids = set()
+    for value in values or []:
+        for item in value.split(','):
+            item = item.strip()
+            if item:
+                thread_ids.add(item)
+    return thread_ids
+
+
+def filter_session_files_by_thread_ids(files: List[Path], thread_ids: set) -> List[Path]:
+    if not thread_ids:
+        return files
+    return [file for file in files if get_thread_id(file) in thread_ids]
+
+
+def filter_summary_files_by_thread_ids(files: List[Path], thread_ids: set) -> List[Path]:
+    if not thread_ids:
+        return files
+    filtered: List[Path] = []
+    for file in files:
+        try:
+            lines = file.read_text(encoding='utf-8').splitlines()
+        except Exception:
+            continue
+        metadata = summary_metadata(lines)
+        if (metadata.get('thread_id') or get_thread_id(file)) in thread_ids:
+            filtered.append(file)
+    return filtered
+
+
 def collect_sessions(
     candidate_files: List[Path],
     project_matcher,
@@ -758,15 +789,17 @@ def main() -> int:
     parser.add_argument('--limit', type=int, help='Cap the number of returned rows after sorting')
     parser.add_argument('--title-limit', type=int, help='Cap title rows in hybrid output before adding snippets')
     parser.add_argument('--include-boilerplate', action='store_true', help='Include system/developer instructions and injected preambles in search text')
-    parser.add_argument('--source', choices=['sessions', 'summaries', 'both'], default='sessions', help='Search raw session JSONL, rollout summaries, or both')
+    parser.add_argument('--thread-id', action='append', help='Restrict search to one thread id. Repeat or pass comma-separated values.')
+    parser.add_argument('--source', choices=['auto', 'sessions', 'summaries', 'both'], default='auto', help='Search raw session JSONL, rollout summaries, or both. auto uses summaries first for --thread-id and sessions otherwise.')
     parser.add_argument('--state-db', default=str(Path.home() / '.codex/state_5.sqlite'), help='Path to Codex state sqlite database used for thread metadata')
     parser.add_argument('--dedupe', dest='dedupe', action='store_true', default=True, help='Dedupe by (thread_id, normalized_text)')
     parser.add_argument('--no-dedupe', dest='dedupe', action='store_false', help='Do not dedupe mirrored or repeated messages')
     args = parser.parse_args()
 
     thread_listing_mode = args.threads_only or args.threads_with_titles
-    if not args.query and not args.title_query and not args.list_projects and not thread_listing_mode:
-        parser.error('--query or --title-query is required unless --list-projects or a thread-listing mode is used')
+    thread_ids = parse_thread_ids(args.thread_id)
+    if not args.query and not args.title_query and not args.list_projects and not thread_listing_mode and not thread_ids:
+        parser.error('--query, --title-query, or --thread-id is required unless --list-projects or a thread-listing mode is used')
     if args.query_mode in ('title', 'hybrid') and not (args.title_query or args.query):
         parser.error('--query-mode title/hybrid requires --title-query or --query')
 
@@ -801,8 +834,16 @@ def main() -> int:
                     print(f'{thread_id}\t{output_cell(title)}')
             return 0
 
-    candidate_files = candidate_jsonl_files(args) if args.source in ('sessions', 'both') else []
-    summary_files = all_summary_files() if args.source in ('summaries', 'both') else []
+    auto_thread_summary_first = args.source == 'auto' and bool(thread_ids)
+    source = args.source
+    if source == 'auto':
+        source = 'both' if thread_ids else 'sessions'
+
+    candidate_files = candidate_jsonl_files(args) if source in ('sessions', 'both') else []
+    summary_files = all_summary_files() if source in ('summaries', 'both') else []
+    if thread_ids:
+        candidate_files = filter_session_files_by_thread_ids(candidate_files, thread_ids)
+        summary_files = filter_summary_files_by_thread_ids(summary_files, thread_ids)
 
     if args.list_projects:
         projects, matching_threads = {}, set()
@@ -834,16 +875,6 @@ def main() -> int:
         return print_title_results(title_results, args)
 
     results: List[Tuple[str, str, str, Path, int, str]] = []
-    if candidate_files:
-        session_results, _, session_threads = collect_search_results(
-            candidate_files,
-            matcher,
-            project_matcher,
-            dedupe=args.dedupe,
-            include_boilerplate=args.include_boilerplate,
-        )
-        results.extend(session_results)
-        matching_threads.update(session_threads)
     if summary_files:
         summary_results, _, summary_threads = collect_summary_results(
             summary_files,
@@ -853,6 +884,17 @@ def main() -> int:
         )
         results.extend(summary_results)
         matching_threads.update(summary_threads)
+    should_search_sessions = bool(candidate_files) and not (auto_thread_summary_first and results)
+    if should_search_sessions:
+        session_results, _, session_threads = collect_search_results(
+            candidate_files,
+            matcher,
+            project_matcher,
+            dedupe=args.dedupe,
+            include_boilerplate=args.include_boilerplate,
+        )
+        results.extend(session_results)
+        matching_threads.update(session_threads)
     if args.query_mode == 'hybrid':
         title_results = collect_title_results(thread_rows, title_scorer, project_matcher)
         return print_hybrid_results(args, title_results, results)
