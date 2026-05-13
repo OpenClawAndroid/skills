@@ -24,12 +24,13 @@ Main techniques:
 ## Workflow
 
 Use this order:
-1. if specific thread IDs are known, read rollout summaries first
-2. search raw sessions only for exact transcript evidence or missing summary details
-3. analyze existing chats for the target project
-4. derive a few concrete topic questions from real prior work
-5. ask those questions through `codex exec`
-6. compare output quality and speed
+1. if the prompt contains a thread UUID, use `--thread-id` before any broad search
+2. read rollout summaries first for those specific thread IDs
+3. search raw sessions only for exact transcript evidence or missing summary details
+4. analyze existing chats for the target project
+5. derive a few concrete topic questions from real prior work
+6. ask those questions through `codex exec`
+7. compare output quality and speed
 
 Do not start with a vague prompt if you can mine the project history first.
 
@@ -39,7 +40,15 @@ Known-thread summary-first lookup:
 
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
-  --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" \
+  --thread-id "019e20f4-8ae6-7bb3-a599-4af7d5efeccf" \
+  --limit 20
+```
+
+Compatibility check for agents that accidentally pass a bare UUID as `--query`:
+
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
+  --query "019e20f4-8ae6-7bb3-a599-4af7d5efeccf" \
   --limit 20
 ```
 
@@ -47,7 +56,7 @@ Known-thread raw fallback when exact transcript evidence is needed:
 
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
-  --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" \
+  --thread-id "019e20f4-8ae6-7bb3-a599-4af7d5efeccf" \
   --source sessions \
   --query "pnpm run build"
 ```
@@ -166,7 +175,7 @@ Do not judge only by primitive speed. Judge the full agent workflow.
 ## Current practical default
 
 Use `search_chats.py` as the default skill path.
-For known thread IDs, use `--thread-id` first; default `--source auto` returns rollout-summary evidence before raw chat.
+For known thread IDs, use `--thread-id` first; default `--source auto` returns rollout-summary evidence before raw chat. A bare thread UUID passed through `--query` must behave the same way and should not trigger broad corpus search.
 For broad thematic discovery, start with `--source summaries`, then use raw session search for precise quotes or transcript evidence.
 
 Use `rg` for:

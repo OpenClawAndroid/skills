@@ -17,27 +17,34 @@ Search these sources:
 - `/Users/igor/.codex/state_5.sqlite` for thread metadata
 
 Prefer structured extraction from JSONL message fields to avoid false positives from encrypted/reasoning blobs.
-When the user gives specific thread IDs, read rollout summaries first before raw chat. The script does this by default with `--thread-id`: it searches the matching summary file first and falls back to raw session JSONL only if the summary has no matching output.
+When the user gives specific thread IDs, use `--thread-id` first. Do not pass a thread UUID as `--query`, and do not start with `rg` or `MEMORY.md` for that case. The script also auto-promotes a bare UUID query into a thread filter, but skill users should call `--thread-id` explicitly.
+For thread-ID lookups, the script searches the matching rollout summary first and falls back to raw session JSONL only if the summary has no matching output.
 For broad prior-work discovery, summary search is also usually cheaper and cleaner than raw transcript search. Use raw sessions when the user needs exact quotes, line-level evidence, full transcript context, or the summary hit is not enough.
 
 Do not inspect `/Users/igor/.codex/memories/MEMORY.md` for normal raw chat-history answers; it is a registry over summaries. Use it only when you need to locate relevant rollout summaries faster than searching summary files directly.
 
 ## Workflow
 
-1. If the user provides specific thread IDs, start summary-first:
+1. If the prompt contains a thread UUID, extract it and run `--thread-id` before any other search:
 ```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" --limit 20
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --thread-id "019e20f4-8ae6-7bb3-a599-4af7d5efeccf" --limit 20
 ```
 
 Add `--query` to filter inside those summaries:
 ```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" --query "verification" --limit 10
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --thread-id "019e20f4-8ae6-7bb3-a599-4af7d5efeccf" --query "verification" --limit 10
 ```
 
 Use `--source sessions` only when exact raw transcript evidence is needed:
 ```bash
-python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --thread-id "019e1a24-0058-77c1-a907-91749e7185e4" --source sessions --query "pnpm run build"
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --thread-id "019e20f4-8ae6-7bb3-a599-4af7d5efeccf" --source sessions --query "pnpm run build"
 ```
+
+Anti-pattern:
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py --query "019e20f4-8ae6-7bb3-a599-4af7d5efeccf"
+```
+This is accepted for compatibility, but it is less clear than `--thread-id` and previously led agents into broad noisy searches.
 
 2. For broad prior-work discovery, search rollout summaries first:
 ```bash

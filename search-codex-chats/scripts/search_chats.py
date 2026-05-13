@@ -13,6 +13,7 @@ BASES = [
     Path('/Users/igor/.codex/archived_sessions'),
 ]
 SUMMARY_BASE = Path('/Users/igor/.codex/memories/rollout_summaries')
+THREAD_ID_RE = re.compile(r'019[0-9a-f]{5,}-[0-9a-f-]{20,}', re.IGNORECASE)
 
 BOILERPLATE_PREFIXES = (
     '<app-context>',
@@ -45,6 +46,27 @@ def iter_summary_files() -> Iterable[Path]:
 
 def all_summary_files() -> List[Path]:
     return list(iter_summary_files())
+
+
+def summary_files_for_thread_ids(thread_ids: set) -> List[Path]:
+    if not SUMMARY_BASE.exists() or not thread_ids:
+        return []
+    command = ['rg', '--files-with-matches', '--fixed-strings']
+    for thread_id in sorted(thread_ids):
+        command.extend(['--regexp', thread_id])
+    try:
+        completed = subprocess.run(
+            [*command, str(SUMMARY_BASE)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return filter_summary_files_by_thread_ids(all_summary_files(), thread_ids)
+    if completed.returncode not in (0, 1):
+        return filter_summary_files_by_thread_ids(all_summary_files(), thread_ids)
+    candidates = [Path(line) for line in completed.stdout.splitlines() if line.strip()]
+    return filter_summary_files_by_thread_ids(candidates, thread_ids)
 
 
 def is_boilerplate_text(text: str) -> bool:
@@ -223,6 +245,30 @@ def load_threads_from_state_db(db_path: Path) -> List[Tuple[str, str, str, int]]
             created_at = 0
         out.append((str(thread_id), str(title), str(cwd or ''), created_at))
     return out
+
+
+def load_rollout_paths_for_thread_ids(db_path: Path, thread_ids: set) -> List[Path]:
+    if not db_path.exists() or not thread_ids:
+        return []
+    placeholders = ','.join('?' for _ in thread_ids)
+    try:
+        with sqlite3.connect(str(db_path)) as con:
+            rows = con.execute(
+                f'SELECT rollout_path FROM threads WHERE id IN ({placeholders})',
+                tuple(sorted(thread_ids)),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    paths: List[Path] = []
+    seen = set()
+    for (rollout_path,) in rows:
+        if not rollout_path:
+            continue
+        path = Path(str(rollout_path))
+        if path.exists() and path not in seen:
+            paths.append(path)
+            seen.add(path)
+    return paths
 
 
 def format_created_at_ms(created_at_ms: int) -> str:
@@ -466,6 +512,26 @@ def candidate_jsonl_files(args: argparse.Namespace) -> List[Path]:
     return all_jsonl_files()
 
 
+def session_files_for_thread_ids(thread_ids: set, known_paths: Optional[List[Path]] = None) -> List[Path]:
+    files: List[Path] = []
+    seen = set()
+    for file in known_paths or []:
+        if file not in seen:
+            files.append(file)
+            seen.add(file)
+    if files:
+        return files
+    for thread_id in sorted(thread_ids):
+        for base in BASES:
+            if not base.exists():
+                continue
+            for file in base.rglob(f'*{thread_id}*.jsonl'):
+                if file not in seen:
+                    files.append(file)
+                    seen.add(file)
+    return files
+
+
 def parse_thread_ids(values: Optional[List[str]]) -> set:
     thread_ids = set()
     for value in values or []:
@@ -474,6 +540,18 @@ def parse_thread_ids(values: Optional[List[str]]) -> set:
             if item:
                 thread_ids.add(item)
     return thread_ids
+
+
+def thread_ids_from_query(query: Optional[str]) -> set:
+    if not query:
+        return set()
+    normalized_query = query.strip()
+    if not normalized_query:
+        return set()
+    thread_ids = set(THREAD_ID_RE.findall(normalized_query))
+    remainder = THREAD_ID_RE.sub('', normalized_query)
+    remainder = re.sub(r'[\s,;:()"\']+', '', remainder)
+    return thread_ids if thread_ids and not remainder else set()
 
 
 def filter_session_files_by_thread_ids(files: List[Path], thread_ids: set) -> List[Path]:
@@ -798,6 +876,18 @@ def main() -> int:
 
     thread_listing_mode = args.threads_only or args.threads_with_titles
     thread_ids = parse_thread_ids(args.thread_id)
+    implicit_thread_ids = set()
+    if (
+        not thread_ids
+        and args.query
+        and not args.regex
+        and args.query_mode in ('auto', 'literal')
+        and not args.title_query
+    ):
+        implicit_thread_ids = thread_ids_from_query(args.query)
+        if implicit_thread_ids:
+            thread_ids = implicit_thread_ids
+            args.query = None
     if not args.query and not args.title_query and not args.list_projects and not thread_listing_mode and not thread_ids:
         parser.error('--query, --title-query, or --thread-id is required unless --list-projects or a thread-listing mode is used')
     if args.query_mode in ('title', 'hybrid') and not (args.title_query or args.query):
@@ -813,7 +903,7 @@ def main() -> int:
     state_db_path = Path(args.state_db).expanduser()
     thread_rows = load_threads_from_state_db(state_db_path)
 
-    if thread_listing_mode and not args.query:
+    if thread_listing_mode and not args.query and not thread_ids:
         if thread_rows:
             filtered_threads = [
                 (thread_id, title, created_at_ms)
@@ -839,11 +929,15 @@ def main() -> int:
     if source == 'auto':
         source = 'both' if thread_ids else 'sessions'
 
-    candidate_files = candidate_jsonl_files(args) if source in ('sessions', 'both') else []
-    summary_files = all_summary_files() if source in ('summaries', 'both') else []
-    if thread_ids:
-        candidate_files = filter_session_files_by_thread_ids(candidate_files, thread_ids)
-        summary_files = filter_summary_files_by_thread_ids(summary_files, thread_ids)
+    if source in ('sessions', 'both'):
+        known_session_paths = load_rollout_paths_for_thread_ids(state_db_path, thread_ids) if thread_ids else []
+        candidate_files = session_files_for_thread_ids(thread_ids, known_session_paths) if thread_ids else candidate_jsonl_files(args)
+    else:
+        candidate_files = []
+    if source in ('summaries', 'both'):
+        summary_files = summary_files_for_thread_ids(thread_ids) if thread_ids else all_summary_files()
+    else:
+        summary_files = []
 
     if args.list_projects:
         projects, matching_threads = {}, set()
