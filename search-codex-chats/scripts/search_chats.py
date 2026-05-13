@@ -12,6 +12,7 @@ BASES = [
     Path('/Users/igor/.codex/sessions'),
     Path('/Users/igor/.codex/archived_sessions'),
 ]
+SUMMARY_BASE = Path('/Users/igor/.codex/memories/rollout_summaries')
 
 BOILERPLATE_PREFIXES = (
     '<app-context>',
@@ -34,6 +35,16 @@ def iter_jsonl_files() -> Iterable[Path]:
 
 def all_jsonl_files() -> List[Path]:
     return list(iter_jsonl_files())
+
+
+def iter_summary_files() -> Iterable[Path]:
+    if not SUMMARY_BASE.exists():
+        return
+    yield from SUMMARY_BASE.glob('*.md')
+
+
+def all_summary_files() -> List[Path]:
+    return list(iter_summary_files())
 
 
 def is_boilerplate_text(text: str) -> bool:
@@ -230,6 +241,18 @@ def file_project(lines: List[str]) -> str:
         if cwd:
             return cwd
     return ''
+
+
+def summary_metadata(lines: List[str]) -> Dict[str, str]:
+    metadata: Dict[str, str] = {}
+    for line in lines:
+        if not line.strip():
+            break
+        if ':' not in line:
+            continue
+        key, value = line.split(':', 1)
+        metadata[key.strip()] = value.strip()
+    return metadata
 
 
 def first_session_timestamp(lines: List[str]) -> str:
@@ -520,6 +543,51 @@ def collect_search_results(
     return results, projects, matching_threads
 
 
+def collect_summary_results(
+    candidate_files: List[Path],
+    matcher,
+    project_matcher,
+    dedupe: bool,
+) -> Tuple[List[Tuple[str, str, str, Path, int, str]], Dict[str, int], set]:
+    results: List[Tuple[str, str, str, Path, int, str]] = []
+    projects: Dict[str, int] = {}
+    matching_threads = set()
+    seen = set()
+
+    for file in candidate_files:
+        try:
+            lines = file.read_text(encoding='utf-8').splitlines()
+        except Exception:
+            continue
+
+        metadata = summary_metadata(lines)
+        thread_id = metadata.get('thread_id') or get_thread_id(file)
+        project = metadata.get('cwd', '')
+        ts = metadata.get('updated_at', '')
+
+        if project:
+            projects[project] = projects.get(project, 0) + 1
+
+        if not project_matcher(project):
+            continue
+
+        if thread_id:
+            matching_threads.add(thread_id)
+
+        for idx, line in enumerate(lines, start=1):
+            text = normalize(line)
+            if not text or not matcher(text):
+                continue
+            key = (thread_id, text)
+            if dedupe and key in seen:
+                continue
+            if dedupe:
+                seen.add(key)
+            results.append((ts, thread_id, project, file, idx, text))
+
+    return results, projects, matching_threads
+
+
 def print_list_projects(projects: Dict[str, int], project_matcher) -> int:
     filtered = [(project, count) for project, count in projects.items() if project_matcher(project)]
     filtered.sort(key=lambda item: (-item[1], item[0]))
@@ -690,6 +758,7 @@ def main() -> int:
     parser.add_argument('--limit', type=int, help='Cap the number of returned rows after sorting')
     parser.add_argument('--title-limit', type=int, help='Cap title rows in hybrid output before adding snippets')
     parser.add_argument('--include-boilerplate', action='store_true', help='Include system/developer instructions and injected preambles in search text')
+    parser.add_argument('--source', choices=['sessions', 'summaries', 'both'], default='sessions', help='Search raw session JSONL, rollout summaries, or both')
     parser.add_argument('--state-db', default=str(Path.home() / '.codex/state_5.sqlite'), help='Path to Codex state sqlite database used for thread metadata')
     parser.add_argument('--dedupe', dest='dedupe', action='store_true', default=True, help='Dedupe by (thread_id, normalized_text)')
     parser.add_argument('--no-dedupe', dest='dedupe', action='store_false', help='Do not dedupe mirrored or repeated messages')
@@ -732,13 +801,28 @@ def main() -> int:
                     print(f'{thread_id}\t{output_cell(title)}')
             return 0
 
-    candidate_files = candidate_jsonl_files(args)
+    candidate_files = candidate_jsonl_files(args) if args.source in ('sessions', 'both') else []
+    summary_files = all_summary_files() if args.source in ('summaries', 'both') else []
 
     if args.list_projects:
-        projects, matching_threads = collect_sessions(
-            candidate_files,
-            project_matcher,
-        )
+        projects, matching_threads = {}, set()
+        if candidate_files:
+            session_projects, session_threads = collect_sessions(
+                candidate_files,
+                project_matcher,
+            )
+            projects.update(session_projects)
+            matching_threads.update(session_threads)
+        if summary_files:
+            _, summary_projects, summary_threads = collect_summary_results(
+                summary_files,
+                matcher,
+                project_matcher,
+                dedupe=args.dedupe,
+            )
+            for project, count in summary_projects.items():
+                projects[project] = projects.get(project, 0) + count
+            matching_threads.update(summary_threads)
     else:
         projects, matching_threads = {}, set()
 
@@ -749,13 +833,26 @@ def main() -> int:
         title_results = collect_title_results(thread_rows, title_scorer, project_matcher)
         return print_title_results(title_results, args)
 
-    results, _, matching_threads = collect_search_results(
-        candidate_files,
-        matcher,
-        project_matcher,
-        dedupe=args.dedupe,
-        include_boilerplate=args.include_boilerplate,
-    )
+    results: List[Tuple[str, str, str, Path, int, str]] = []
+    if candidate_files:
+        session_results, _, session_threads = collect_search_results(
+            candidate_files,
+            matcher,
+            project_matcher,
+            dedupe=args.dedupe,
+            include_boilerplate=args.include_boilerplate,
+        )
+        results.extend(session_results)
+        matching_threads.update(session_threads)
+    if summary_files:
+        summary_results, _, summary_threads = collect_summary_results(
+            summary_files,
+            matcher,
+            project_matcher,
+            dedupe=args.dedupe,
+        )
+        results.extend(summary_results)
+        matching_threads.update(summary_threads)
     if args.query_mode == 'hybrid':
         title_results = collect_title_results(thread_rows, title_scorer, project_matcher)
         return print_hybrid_results(args, title_results, results)

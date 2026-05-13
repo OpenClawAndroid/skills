@@ -17,21 +17,33 @@ Main techniques:
 
 - `/Users/igor/.codex/sessions`
 - `/Users/igor/.codex/archived_sessions`
+- `/Users/igor/.codex/memories/rollout_summaries`
 - `/Users/igor/.codex/state_5.sqlite`
 
 ## Workflow
 
 Use this order:
-1. analyze existing chats for the target project first
-2. derive a few concrete topic questions from real prior work
-3. ask those questions through `codex exec`
-4. compare output quality and speed
+1. search rollout summaries for candidate threads and topics first
+2. use raw session search only for exact supporting snippets or missing details
+3. derive a few concrete topic questions from real prior work
+4. ask those questions through `codex exec`
+5. compare output quality and speed
 
 Do not start with a vague prompt if you can mine the project history first.
 
 ## Fast direct checks
 
 Analyze likely threads/topics first:
+
+```bash
+python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
+  --source summaries \
+  --project "/Users/igor/Git-projects/codex-web-local" \
+  --query "persistence|draft|workspace-roots|localStorage" \
+  --regex \
+  --newest-first \
+  --limit 10
+```
 
 ```bash
 python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/search_chats.py \
@@ -135,6 +147,7 @@ Do not judge only by primitive speed. Judge the full agent workflow.
 ## Current practical default
 
 Use `search_chats.py` as the default skill path.
+For broad thematic discovery, start with `--source summaries`, then use raw session search for precise quotes or transcript evidence.
 
 Use `rg` for:
 - fast forensic checks
