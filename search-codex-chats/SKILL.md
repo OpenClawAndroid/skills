@@ -127,9 +127,13 @@ python3 /Users/igor/.codex/skills/shared_skills/search-codex-chats/scripts/searc
 Return:
 - total matches
 - unique thread IDs
+- clickable thread links in Markdown form: `[Open thread](codex://threads/<thread_id>)`
 - unique project/cwd count
 - for each match: timestamp, thread ID, project/cwd, file:line, short snippet
 - script rows are tab-separated and title/snippet cells are normalized to one line
+
+When returning one or more thread IDs to the user, include the clickable Codex app link next to the ID or in the thread summary, for example:
+`019e04cb-9670-7d91-be85-3ba35312170c` - [Open thread](codex://threads/019e04cb-9670-7d91-be85-3ba35312170c)
 
 When relevant, deduplicate mirrored pairs (`event_msg` and `response_item`) by `(thread_id, normalized_text)`.
 
