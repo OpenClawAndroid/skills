@@ -1,18 +1,18 @@
 ---
 name: anyclaw-publish
-description: Build and publish beautiful web apps to Anyclaw hosting using the REST API. Use when asked to create, deploy, publish, update, or list hosted apps (both local dev and production).
+description: Build and publish beautiful web apps to OnDev hosting using the REST API. Use when asked to create, deploy, publish, update, or list hosted apps (both local dev and production).
 ---
 
 # Anyclaw Publish
 
 ## When to use
 
-Use this skill when building or publishing web apps on Anyclaw via the REST API:
+Use this skill when building or publishing web apps on OnDev via the REST API:
 
 - `POST /api/deploy` — upload an app and receive a claim URL
 - `GET /api/apps` — list all apps
 
-Creating, building, updating, or improving an Anyclaw app includes publishing unless the user explicitly says not to deploy.
+Creating, building, updating, or improving an OnDev app includes publishing unless the user explicitly says not to deploy.
 
 ## Default workflow (Mandatory)
 
@@ -102,7 +102,7 @@ Include an `app.json` in the ZIP root:
 
 | Environment | Base URL | Deploy | List |
 |---|---|---|---|
-| **Production** | `https://anyclaw.store` | `POST /api/deploy` | `GET /api/apps` |
+| **Production** | `https://ondev.store` | `POST /api/deploy` | `GET /api/apps` |
 | **Local dev** | `http://localhost:<PORT>` (set by `npm run dev`) | `POST /api/deploy` | `GET /api/apps` |
 
 Use local when the local dev server is running (`cd /Users/igor/Git-projects/incus-mcp-php-hosting && npm run dev`).
@@ -132,7 +132,7 @@ Set `app_type` to categorize the app:
 
 If the user asks for a "site", "website", "landing page", "homepage", "marketing page", "portfolio", "blog", "docs", "restaurant site", or similar content-first project, deploy with `app_type: "website"`.
 
-Do not republish a website as `web_app` just to get PWA install behavior. Website deploys intentionally keep `app_type: "website"` and still get an Anyclaw store/detail page at `/install`.
+Do not republish a website as `web_app` just to get PWA install behavior. Website deploys intentionally keep `app_type: "website"` and still get an OnDev store/detail page at `/install`.
 
 Deploy response returns `claim_token` and `claim_url`. Do not claim uploads from this skill; return the claim link to the user.
 
